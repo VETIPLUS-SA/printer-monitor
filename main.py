@@ -2,11 +2,9 @@
 
 Subcommands:
   extract   Log in, read every account's job-accounting counters plus the
-            "other account" bucket and the device-wide totals, and write
-            them to a CSV.
-
-Phase 2 (monthly delta between snapshots) and Phase 3 (report generation)
-are intentionally not implemented yet -- see brief.md.
+            "other account" bucket and the device-wide totals, write them
+            to a CSV, and (unless --dry-run) update the running monthly
+            consumption history for this printer.
 
 Exit codes (extract):
   0  every account read successfully
@@ -24,9 +22,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from printer_monitor.config import ConfigError, load_settings
+from printer_monitor.consumption import format_summary, is_valid_month, update_consumption
 from printer_monitor.extract import run_extraction
 from printer_monitor.output import write_csv
-from printer_monitor.portal import KyoceraPortal, PortalError
+from printer_monitor.portal import KyoceraPortal, PortalError, TOTAL_ACCOUNT_ID
 
 
 def _setup_logging(log_dir: Path | None) -> None:
@@ -55,6 +54,11 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     outdir = Path(args.outdir or settings.outdir)
     dry_run = args.dry_run
 
+    if args.month is not None and not is_valid_month(args.month):
+        print(f"Invalid --month value: {args.month!r} (expected YYYY-MM)", file=sys.stderr)
+        return 1
+    month = args.month or datetime.now().strftime("%Y-%m")
+
     _setup_logging(None if dry_run else (outdir / "logs"))
     logger = logging.getLogger("printer_monitor.main")
 
@@ -66,14 +70,17 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         logger.warning("--dry-run writes no files at all; --pdf has no effect")
         save_pdf = False
 
+    device_ip = urlparse(settings.url).hostname or settings.url
+
     portal = KyoceraPortal(settings, headed=args.headed)
     try:
         with portal:
             rows = run_extraction(
                 portal,
-                device_ip=urlparse(settings.url).hostname or settings.url,
+                device_ip=device_ip,
                 outdir=None if dry_run else outdir,
                 save_pdf=save_pdf,
+                month=month,
             )
     except PortalError as exc:
         logger.error("Fatal portal error: %s", exc)
@@ -94,6 +101,20 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     else:
         csv_path = write_csv(rows, outdir)
         logger.info("Wrote %s", csv_path)
+
+        totals_row = next((row for row in rows if row.get("account_id") == TOTAL_ACCOUNT_ID), None)
+        if totals_row is None:
+            logger.error("No device-totals row found; monthly consumption was not updated")
+        else:
+            consumption_row = update_consumption(
+                outdir=outdir,
+                month=month,
+                device_ip=device_ip,
+                captured_at=totals_row.get("captured_at", ""),
+                totals_row=totals_row,
+            )
+            if consumption_row is not None:
+                logger.info(format_summary(consumption_row))
 
     if any_errors:
         logger.warning("Run completed with errors on at least one account; see status/error columns")
@@ -127,11 +148,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--pdf", action="store_true",
         help="Also save each account's detail page as a PDF (headless only)",
     )
+    extract_parser.add_argument(
+        "--month", metavar="YYYY-MM",
+        help=(
+            "Report month for the PDF folder and the monthly consumption row "
+            "(default: the current local month). Use it e.g. when running on "
+            "the 1st of the month to record the previous month's closing."
+        ),
+    )
     extract_parser.set_defaults(func=_cmd_extract)
-
-    # Reserved for future phases (not implemented yet):
-    #   subparsers.add_parser("delta", help="Compute the period consumption between two snapshots")
-    #   subparsers.add_parser("report", help="Generate a delivery report from a delta CSV")
 
     return parser
 

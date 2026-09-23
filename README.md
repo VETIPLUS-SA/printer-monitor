@@ -8,9 +8,10 @@ Este proyecto reemplaza por completo la versión anterior basada en SNMP
 (`printer_monitor/snmp.py`, `database.py`, `monitor.py`, `reports.py`): el
 portal SNMP no exponía los contadores por usuario, solo totales del equipo.
 
-**Estado actual: Fase 1 (extracción).** Las fases 2 (histórico y cálculo del
-consumo del período) y 3 (reporte) descritas en `brief.md` todavía no están
-implementadas.
+**Estado actual: alcance completo por ahora.** Además de la extracción, el
+script mantiene un histórico de consumo mensual por impresora
+(`consumo_mensual.csv`), que reemplaza a las fases 2 y 3 descritas en
+`brief.md`.
 
 ## Advertencia de seguridad
 
@@ -93,15 +94,22 @@ python main.py extract --dry-run       # recorre todo pero no escribe nada
 python main.py extract --headed        # con ventana visible, para depurar
 python main.py extract --pdf           # además del CSV, un PDF por cuenta
 python main.py extract --outdir salida # carpeta de salida distinta
+python main.py extract --month 2026-09 # fija el mes del reporte
 ```
 
 - `--dry-run` recorre todas las cuentas y lee los contadores, pero **no
   escribe ningún archivo**: ni CSV, ni PDF, ni diagnósticos, ni log en disco
-  (solo consola). Sirve para probar la configuración sin dejar rastro.
+  (solo consola). Sirve para probar la configuración sin dejar rastro. Al
+  ser `--dry-run`, tampoco se actualiza `consumo_mensual.csv`.
 - `--pdf` solo funciona en modo headless (sin `--headed`); si se combinan
   ambas banderas, se omite la generación de PDFs y se avisa por log. Un
   fallo al generar un PDF nunca hace fallar la fila del CSV de esa cuenta.
 - `--outdir` sobrescribe `KYOCERA_OUTDIR`.
+- `--month AAAA-MM` fija el "mes del reporte": determina la carpeta mensual
+  de los PDFs y la fila que se actualiza en `consumo_mensual.csv`. Por
+  defecto es el mes de la fecha de captura (hora local). Útil, por ejemplo,
+  al correr el script el día 1 del mes para registrar el cierre del mes
+  anterior: `python main.py extract --month 2026-08`.
 
 ### Salidas
 
@@ -111,9 +119,11 @@ defecto):
 ```
 output/
 ├── counters_YYYYMMDD_HHMMSS.csv   # una fila por cuenta
-├── pdf/                            # solo con --pdf
+├── consumo_mensual.csv             # histórico de consumo mensual (no en --dry-run)
+├── pdf/                             # solo con --pdf
 │   └── <IP de la impresora>/
-│       └── <NOMBRE EN MAYÚSCULAS, SIN TILDES>.pdf   # p. ej. pdf/192.168.1.59/CAROLINA MEJIA.pdf
+│       └── <AAAA-MM>/
+│           └── <NOMBRE>.pdf         # p. ej. pdf/192.168.1.59/2026-09/CAROLINA MEJIA.pdf
 ├── diagnostics/                    # solo si alguna cuenta falla
 │   └── <timestamp>/<account_id>_*.png / *.html
 └── logs/
@@ -131,6 +141,44 @@ id interno `101`) y una fila `TOTAL` (totales del equipo).
 Si falla la lectura de una cuenta puntual, esa fila queda con `status=error`
 y el mensaje en `error`, pero **la corrida sigue con las demás cuentas**: un
 fallo nunca hace perder los datos de las otras.
+
+Los nombres de archivo PDF van en mayúsculas y sin tildes, pero **conservan
+la Ñ** (p. ej. "Eliana Sánchez Muñoz" → `ELIANA SANCHEZ MUÑOZ.pdf`). La
+carpeta `<AAAA-MM>` es el "mes del reporte" (ver `--month`), no la fecha
+exacta de la corrida. Si dos cuentas comparten el mismo nombre normalizado
+dentro de esa carpeta, al segundo archivo se le agrega el id de cuenta entre
+paréntesis (p. ej. `JUAN PEREZ (2222).pdf`) para no sobrescribir el primero.
+
+### Consumo mensual (`consumo_mensual.csv`)
+
+Cada corrida normal (no `--dry-run`) actualiza `consumo_mensual.csv` en la
+carpeta de salida: un histórico con **una fila por (mes, impresora)**, en
+UTF-8 con BOM. Columnas:
+
+| Columna         | Significado                                                                 |
+|------------------|------------------------------------------------------------------------------|
+| `month`          | Mes del reporte, `AAAA-MM` (ver `--month`)                                  |
+| `device_ip`      | IP/host de la impresora                                                     |
+| `captured_at`    | Fecha/hora de la corrida que generó esta fila                               |
+| `printer_total`, `copier_total`, `scan_total`, `fax_tx_pages` | Contadores **acumulados** del equipo (fila `TOTAL` de esa corrida) |
+| `printer_pages`, `copier_pages`, `scanned_pages`, `fax_pages` | Consumo **de ese mes** (delta contra el mes anterior más reciente con datos) |
+| `printed_pages`  | `printer_pages + copier_pages`: total de páginas impresas en el mes         |
+| `note`           | Vacío en el caso normal; explica el caso especial (ver abajo)               |
+
+- **Línea base**: el primer mes registrado para una impresora no tiene mes
+  anterior con qué compararse, así que las columnas de consumo quedan vacías
+  y `note` dice `baseline: no previous month to compare`.
+- **Reinicio de contadores detectado**: si algún contador acumulado bajó
+  respecto al mes anterior (la impresora reseteó sus contadores), esa
+  columna de consumo queda **vacía** (nunca un número negativo) y `note`
+  dice `counter reset detected: <columnas afectadas>`. `printed_pages`
+  también queda vacío si `printer_pages` o `copier_pages` están vacíos.
+- Si se vuelve a correr el script para el mismo mes y la misma impresora, la
+  fila de ese mes se **reemplaza** (gana la corrida más reciente) y se
+  recalculan los consumos de todos los meses de esa impresora en orden, para
+  que una corrección también corrija el delta del mes siguiente.
+- Si la fila `TOTAL` de la corrida falla (`status != ok`), el archivo **no
+  se toca** y la corrida termina con código de salida `1` (ver más abajo).
 
 ### Códigos de salida
 
@@ -172,6 +220,12 @@ python -m pytest -q
   separación (`\xa0`).
 - `tests/test_output.py`: orden de columnas del CSV, ceros a la izquierda en
   `account_id`, filas de error.
+- `tests/test_pdf_paths.py`: nombres de archivo PDF (tildes fuera, Ñ
+  conservada, caracteres inválidos de Windows) y la carpeta mensual.
+- `tests/test_consumption.py`: `consumo_mensual.csv` -- línea base, delta
+  normal, `printed_pages`, reset de contadores, upsert del mismo mes con
+  recálculo del mes siguiente, impresoras independientes, meses con huecos
+  y fila `TOTAL` con error.
 
 ## Herramienta de reconocimiento (Fase 0)
 
@@ -181,11 +235,9 @@ real del portal antes de escribir el extractor (ver
 para volver a usarlo si el firmware del portal cambia; también es de solo
 lectura.
 
-## Próximos pasos (no implementados)
+## Alcance del proyecto
 
-- **Fase 2**: guardar cada corrida como snapshot inmutable
-  (`snapshots/YYYY-MM.csv`) y calcular el consumo del período restando el
-  snapshot anterior, manejando cuentas nuevas/desaparecidas y deltas
-  negativos (reset de contadores en la impresora).
-- **Fase 3**: generar el reporte de entrega a partir del CSV de consumo del
-  período, desacoplado de Playwright.
+El alcance está completo por ahora: extracción de contadores por cuenta
+(Fase 1) más el histórico de consumo mensual por impresora
+(`consumo_mensual.csv`, ver arriba), que reemplaza lo que `brief.md`
+describía como fases 2 y 3.

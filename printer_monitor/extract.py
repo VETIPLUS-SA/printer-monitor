@@ -47,10 +47,26 @@ def _now_iso() -> str:
 _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+_N_WITH_TILDE = ("ñ", "Ñ")
+
+
 def _pdf_filename(name: str) -> str:
-    """Account name as a Windows-safe, upper-cased ASCII file stem (accents removed)."""
-    # NFKD splits "í" into "i" + combining accent, which is then dropped ("Ñ" -> "N").
-    cleaned = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    """Account name as a Windows-safe, upper-cased file stem: accents are
+    removed, except the letter ñ/Ñ, which is kept as-is.
+
+    NFKD splits "i" (accented) into "i" + combining accent, which is then
+    dropped; "n" (tilde) would decompose the same way ("n" + combining
+    tilde), so it is special-cased character by character instead of being
+    stripped.
+    """
+    kept = []
+    for char in name:
+        if char in _N_WITH_TILDE:
+            kept.append(char)
+            continue
+        decomposed = unicodedata.normalize("NFKD", char)
+        kept.append(decomposed.encode("ascii", "ignore").decode("ascii"))
+    cleaned = "".join(kept)
     cleaned = _INVALID_FILENAME_CHARS.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .").upper()
     return cleaned or "SIN NOMBRE"
@@ -66,20 +82,22 @@ def _base_row(account_id: str, private_id: str, name: str, device_ip: str) -> di
     }
 
 
-def _pdf_path(outdir: Path, device_ip: str, account_id: str, name: str, taken: set[str]) -> Path:
-    """PDFs go to <outdir>/pdf/<device ip>/<NAME>.pdf; the folder identifies the
-    printer, so the account id is only appended when two accounts share a name."""
+def _pdf_path(outdir: Path, device_ip: str, month: str, account_id: str, name: str, taken: set[str]) -> Path:
+    """PDFs go to <outdir>/pdf/<device ip>/<YYYY-MM>/<NAME>.pdf; the month
+    is the report month (see --month), and the account id is only appended
+    when two accounts share a name within that month's folder."""
     stem = _pdf_filename(name)
     if stem in taken:
         stem = f"{stem} ({account_id})"
     taken.add(stem)
-    return outdir / "pdf" / device_ip / f"{stem}.pdf"
+    return outdir / "pdf" / device_ip / month / f"{stem}.pdf"
 
 
 def _read_account_row(
     portal: KyoceraPortal,
     account: Account,
     device_ip: str,
+    month: str,
     outdir: Optional[Path],
     save_pdf: bool,
     pdf_names: set[str],
@@ -104,7 +122,7 @@ def _read_account_row(
 
     if save_pdf and outdir is not None:
         try:
-            portal.save_pdf(_pdf_path(outdir, device_ip, account.public_id, account.name, pdf_names))
+            portal.save_pdf(_pdf_path(outdir, device_ip, month, account.public_id, account.name, pdf_names))
         except Exception as pdf_exc:  # noqa: BLE001 - a PDF failure must not fail the account's CSV data
             logger.warning("PDF save failed for %s (CSV data kept): %s", account.public_id, pdf_exc)
 
@@ -114,6 +132,7 @@ def _read_account_row(
 def _read_totals_row(
     portal: KyoceraPortal,
     device_ip: str,
+    month: str,
     outdir: Optional[Path],
     save_pdf: bool,
     pdf_names: set[str],
@@ -137,7 +156,7 @@ def _read_totals_row(
 
     if save_pdf and outdir is not None:
         try:
-            portal.save_pdf(_pdf_path(outdir, device_ip, TOTAL_ACCOUNT_ID, row["account_name"], pdf_names))
+            portal.save_pdf(_pdf_path(outdir, device_ip, month, TOTAL_ACCOUNT_ID, row["account_name"], pdf_names))
         except Exception as pdf_exc:  # noqa: BLE001
             logger.warning("PDF save failed for device totals (CSV data kept): %s", pdf_exc)
 
@@ -149,13 +168,19 @@ def run_extraction(
     device_ip: str,
     outdir: Optional[Path],
     save_pdf: bool = False,
+    month: Optional[str] = None,
 ) -> list[dict]:
     """Walk every account plus the "other account" and device totals,
     returning one row dict per record.
 
     `outdir=None` means dry-run: no diagnostics and no PDFs are written
     (the CSV itself is written by the caller, also skipped in dry-run).
+
+    `month` (YYYY-MM) is the report month used for the PDF folder; it
+    defaults to the current local month when not given.
     """
+    if month is None:
+        month = datetime.now().strftime("%Y-%m")
     accounts = portal.list_accounts()
     # The "other account" bucket is always read explicitly (see
     # _OTHER_ACCOUNT above); exclude it here to avoid a duplicate row if
@@ -168,12 +193,14 @@ def run_extraction(
 
     for index, account in enumerate(regular_accounts, start=1):
         logger.info("Account %d of %d: %s (%s)", index, total, account.name, account.public_id)
-        rows.append(_read_account_row(portal, account, device_ip, outdir, save_pdf, pdf_names))
+        rows.append(_read_account_row(portal, account, device_ip, month, outdir, save_pdf, pdf_names))
 
     logger.info("Reading 'other account' totals (private id %s)", OTHER_ACCOUNT_PRIVATE_ID)
-    rows.append(_read_account_row(portal, _OTHER_ACCOUNT, device_ip, outdir, save_pdf, pdf_names, check_title=False))
+    rows.append(
+        _read_account_row(portal, _OTHER_ACCOUNT, device_ip, month, outdir, save_pdf, pdf_names, check_title=False)
+    )
 
     logger.info("Reading device-wide totals")
-    rows.append(_read_totals_row(portal, device_ip, outdir, save_pdf, pdf_names))
+    rows.append(_read_totals_row(portal, device_ip, month, outdir, save_pdf, pdf_names))
 
     return rows
