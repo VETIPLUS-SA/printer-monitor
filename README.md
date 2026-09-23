@@ -112,7 +112,8 @@ defecto):
 output/
 ├── counters_YYYYMMDD_HHMMSS.csv   # una fila por cuenta
 ├── pdf/                            # solo con --pdf
-│   └── <account_id>_<nombre>.pdf
+│   └── <IP de la impresora>/
+│       └── <NOMBRE EN MAYÚSCULAS>.pdf   # p. ej. pdf/192.168.1.59/ANGEL ZABALETA.pdf
 ├── diagnostics/                    # solo si alguna cuenta falla
 │   └── <timestamp>/<account_id>_*.png / *.html
 └── logs/

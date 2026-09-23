@@ -21,6 +21,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from printer_monitor.config import ConfigError, load_settings
 from printer_monitor.extract import run_extraction
@@ -70,7 +71,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         with portal:
             rows = run_extraction(
                 portal,
-                device_ip=settings.url,
+                device_ip=urlparse(settings.url).hostname or settings.url,
                 outdir=None if dry_run else outdir,
                 save_pdf=save_pdf,
             )

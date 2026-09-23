@@ -42,9 +42,15 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _slugify(name: str) -> str:
-    slug = re.sub(r"[^\w]+", "_", name, flags=re.UNICODE).strip("_").lower()
-    return slug or "account"
+# Characters Windows does not allow in file names.
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _pdf_filename(name: str) -> str:
+    """Account name as a Windows-safe, upper-cased file stem (accents kept)."""
+    cleaned = _INVALID_FILENAME_CHARS.sub(" ", name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .").upper()
+    return cleaned or "SIN NOMBRE"
 
 
 def _base_row(account_id: str, private_id: str, name: str, device_ip: str) -> dict:
@@ -57,8 +63,14 @@ def _base_row(account_id: str, private_id: str, name: str, device_ip: str) -> di
     }
 
 
-def _pdf_path(outdir: Path, account_id: str, name: str) -> Path:
-    return outdir / "pdf" / f"{account_id}_{_slugify(name)}.pdf"
+def _pdf_path(outdir: Path, device_ip: str, account_id: str, name: str, taken: set[str]) -> Path:
+    """PDFs go to <outdir>/pdf/<device ip>/<NAME>.pdf; the folder identifies the
+    printer, so the account id is only appended when two accounts share a name."""
+    stem = _pdf_filename(name)
+    if stem in taken:
+        stem = f"{stem} ({account_id})"
+    taken.add(stem)
+    return outdir / "pdf" / device_ip / f"{stem}.pdf"
 
 
 def _read_account_row(
@@ -67,6 +79,7 @@ def _read_account_row(
     device_ip: str,
     outdir: Optional[Path],
     save_pdf: bool,
+    pdf_names: set[str],
     check_title: bool = True,
 ) -> dict:
     row = _base_row(account.public_id, account.private_id, account.name, device_ip)
@@ -88,7 +101,7 @@ def _read_account_row(
 
     if save_pdf and outdir is not None:
         try:
-            portal.save_pdf(_pdf_path(outdir, account.public_id, account.name))
+            portal.save_pdf(_pdf_path(outdir, device_ip, account.public_id, account.name, pdf_names))
         except Exception as pdf_exc:  # noqa: BLE001 - a PDF failure must not fail the account's CSV data
             logger.warning("PDF save failed for %s (CSV data kept): %s", account.public_id, pdf_exc)
 
@@ -100,6 +113,7 @@ def _read_totals_row(
     device_ip: str,
     outdir: Optional[Path],
     save_pdf: bool,
+    pdf_names: set[str],
 ) -> dict:
     row = _base_row(TOTAL_ACCOUNT_ID, "", "Contabilidad total de trabajos", device_ip)
     try:
@@ -120,7 +134,7 @@ def _read_totals_row(
 
     if save_pdf and outdir is not None:
         try:
-            portal.save_pdf(_pdf_path(outdir, TOTAL_ACCOUNT_ID, row["account_name"]))
+            portal.save_pdf(_pdf_path(outdir, device_ip, TOTAL_ACCOUNT_ID, row["account_name"], pdf_names))
         except Exception as pdf_exc:  # noqa: BLE001
             logger.warning("PDF save failed for device totals (CSV data kept): %s", pdf_exc)
 
@@ -146,16 +160,17 @@ def run_extraction(
     regular_accounts = [a for a in accounts if a.private_id != OTHER_ACCOUNT_PRIVATE_ID]
 
     rows: list[dict] = []
+    pdf_names: set[str] = set()
     total = len(regular_accounts)
 
     for index, account in enumerate(regular_accounts, start=1):
         logger.info("Account %d of %d: %s (%s)", index, total, account.name, account.public_id)
-        rows.append(_read_account_row(portal, account, device_ip, outdir, save_pdf))
+        rows.append(_read_account_row(portal, account, device_ip, outdir, save_pdf, pdf_names))
 
     logger.info("Reading 'other account' totals (private id %s)", OTHER_ACCOUNT_PRIVATE_ID)
-    rows.append(_read_account_row(portal, _OTHER_ACCOUNT, device_ip, outdir, save_pdf, check_title=False))
+    rows.append(_read_account_row(portal, _OTHER_ACCOUNT, device_ip, outdir, save_pdf, pdf_names, check_title=False))
 
     logger.info("Reading device-wide totals")
-    rows.append(_read_totals_row(portal, device_ip, outdir, save_pdf))
+    rows.append(_read_totals_row(portal, device_ip, outdir, save_pdf, pdf_names))
 
     return rows
