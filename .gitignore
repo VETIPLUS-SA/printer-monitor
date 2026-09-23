@@ -46,6 +46,9 @@ data/*.db
 # Generated Reports
 reports/
 
+# Local agent tooling
+.atl/
+
 # Kyocera recon dumps (contain user names / account data)
 recon/
 
