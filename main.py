@@ -1,16 +1,20 @@
 """CLI entry point for the Kyocera portal job-counter extractor.
 
 Subcommands:
-  extract   Log in, read every account's job-accounting counters plus the
-            "other account" bucket and the device-wide totals, write them
-            to a CSV, and (unless --dry-run) update the running monthly
-            consumption history for this printer.
+  extract   Log in to one or more printers, read every account's
+            job-accounting counters plus the "other account" bucket and
+            the device-wide totals, write them to a CSV per printer, and
+            (unless --dry-run) update each printer's running monthly
+            consumption history. Printers run sequentially, each with its
+            own browser session; one printer failing never stops the
+            others (see the run summary printed at the end).
 
-Exit codes (extract):
-  0  every account read successfully
-  1  configuration error, fatal portal error, or at least one account
-     failed (its row is still in the CSV with status=error)
-  2  the safety guard blocked at least one request during the run
+Exit codes (extract), computed across all configured/selected printers:
+  0  every printer ran with no account errors
+  1  configuration error, or at least one printer had a fatal portal
+     error / unexpected failure / an account with status=error
+  2  the safety guard blocked at least one request on at least one
+     printer during the run
 """
 from __future__ import annotations
 
@@ -21,11 +25,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from printer_monitor.config import ConfigError, load_settings
+from printer_monitor.config import ConfigError, Settings, load_printers
 from printer_monitor.consumption import format_summary, is_valid_month, update_consumption
 from printer_monitor.extract import run_extraction
 from printer_monitor.output import write_csv
 from printer_monitor.portal import KyoceraPortal, PortalError, TOTAL_ACCOUNT_ID
+from printer_monitor.run import PrinterOutcome, aggregate_exit_code, build_outcome, format_summary_table
 
 
 def _setup_logging(log_dir: Path | None) -> None:
@@ -44,20 +49,124 @@ def _setup_logging(log_dir: Path | None) -> None:
     )
 
 
+def _select_printers(printers: list[Settings], requested: list[str] | None) -> list[Settings] | str:
+    """Filter `printers` to the names in `requested` (case-insensitive,
+    order of `requested` is not preserved -- `printers`' order is kept).
+    Returns the filtered list, or an error message (str) if a requested
+    name doesn't match any configured printer."""
+    if not requested:
+        return printers
+
+    by_lower = {p.name.lower(): p for p in printers}
+    unknown = [name for name in requested if name.lower() not in by_lower]
+    if unknown:
+        configured = ", ".join(p.name for p in printers)
+        return (
+            f"Unknown printer name(s): {', '.join(unknown)}. "
+            f"Configured printer(s): {configured}."
+        )
+
+    wanted_lower = {name.lower() for name in requested}
+    return [p for p in printers if p.name.lower() in wanted_lower]
+
+
+def _run_one_printer(
+    settings: Settings,
+    device_ip: str,
+    outdir: Path,
+    dry_run: bool,
+    save_pdf: bool,
+    month: str,
+    headed: bool,
+    logger: logging.Logger,
+) -> PrinterOutcome:
+    """Open a fresh KyoceraPortal for `settings`, run the extraction, and
+    (unless dry-run or safety-blocked) write its CSV and update its
+    monthly consumption row. Never raises: any PortalError or other
+    exception (e.g. a Playwright TimeoutError when the printer is
+    unreachable) is caught here and turned into a "failed" outcome so one
+    printer never stops the others."""
+    portal = KyoceraPortal(settings, headed=headed)
+    try:
+        with portal:
+            rows = run_extraction(
+                portal,
+                device_ip=device_ip,
+                outdir=None if dry_run else outdir,
+                save_pdf=save_pdf,
+                month=month,
+                printer_name=settings.name,
+            )
+    except PortalError as exc:
+        logger.error("Printer %s: fatal portal error: %s", settings.name, exc)
+        return build_outcome(settings.name, device_ip, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - one printer's failure must never stop the others
+        # Playwright errors append a multi-line call log; the first line is the useful part.
+        message = (str(exc).splitlines() or [repr(exc)])[0]
+        logger.error("Printer %s: unexpected error (unreachable or off?): %s", settings.name, message)
+        return build_outcome(settings.name, device_ip, error=message)
+
+    if portal.guard.has_blocked:
+        blocked_count = len(portal.guard.blocked)
+        logger.error(
+            "SAFETY WARNING (printer %s): %d request(s) were blocked by the safety guard during "
+            "this run. Nothing destructive was executed, but review the log above -- the run may "
+            "be incomplete.",
+            settings.name, blocked_count,
+        )
+        return build_outcome(settings.name, device_ip, blocked=True, blocked_count=blocked_count)
+
+    if dry_run:
+        logger.info(
+            "Printer %s: dry run complete: %d record(s) walked, no files written",
+            settings.name, len(rows),
+        )
+        return build_outcome(settings.name, device_ip, rows=rows)
+
+    csv_path = write_csv(rows, outdir, device_ip)
+    logger.info("Printer %s: wrote %s", settings.name, csv_path)
+
+    totals_row = next((row for row in rows if row.get("account_id") == TOTAL_ACCOUNT_ID), None)
+    if totals_row is None:
+        logger.error(
+            "Printer %s: no device-totals row found; monthly consumption was not updated",
+            settings.name,
+        )
+    else:
+        consumption_row = update_consumption(
+            outdir=outdir,
+            month=month,
+            device_ip=device_ip,
+            captured_at=totals_row.get("captured_at", ""),
+            totals_row=totals_row,
+            printer_name=settings.name,
+        )
+        if consumption_row is not None:
+            logger.info(format_summary(consumption_row))
+
+    return build_outcome(settings.name, device_ip, rows=rows)
+
+
 def _cmd_extract(args: argparse.Namespace) -> int:
     try:
-        settings = load_settings()
+        printers = load_printers()
     except ConfigError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
 
-    outdir = Path(args.outdir or settings.outdir)
-    dry_run = args.dry_run
+    selected = _select_printers(printers, args.printer)
+    if isinstance(selected, str):
+        print(selected, file=sys.stderr)
+        return 1
+    printers = selected
 
     if args.month is not None and not is_valid_month(args.month):
         print(f"Invalid --month value: {args.month!r} (expected YYYY-MM)", file=sys.stderr)
         return 1
     month = args.month or datetime.now().strftime("%Y-%m")
+
+    outdir = Path(args.outdir or printers[0].outdir)
+    dry_run = args.dry_run
 
     _setup_logging(None if dry_run else (outdir / "logs"))
     logger = logging.getLogger("printer_monitor.main")
@@ -70,56 +179,18 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         logger.warning("--dry-run writes no files at all; --pdf has no effect")
         save_pdf = False
 
-    device_ip = urlparse(settings.url).hostname or settings.url
-
-    portal = KyoceraPortal(settings, headed=args.headed)
-    try:
-        with portal:
-            rows = run_extraction(
-                portal,
-                device_ip=device_ip,
-                outdir=None if dry_run else outdir,
-                save_pdf=save_pdf,
-                month=month,
-            )
-    except PortalError as exc:
-        logger.error("Fatal portal error: %s", exc)
-        return 1
-
-    if portal.guard.has_blocked:
-        logger.error(
-            "SAFETY WARNING: %d request(s) were blocked by the safety guard during this run. "
-            "Nothing destructive was executed, but review the log above -- the run may be incomplete.",
-            len(portal.guard.blocked),
+    outcomes: list[PrinterOutcome] = []
+    total = len(printers)
+    for index, settings in enumerate(printers, start=1):
+        device_ip = urlparse(settings.url).hostname or settings.url
+        logger.info("Printer %d of %d: %s (%s)", index, total, settings.name, device_ip)
+        outcomes.append(
+            _run_one_printer(settings, device_ip, outdir, dry_run, save_pdf, month, args.headed, logger)
         )
-        return 2
 
-    any_errors = any(row.get("status") == "error" for row in rows)
+    logger.info(format_summary_table(outcomes))
 
-    if dry_run:
-        logger.info("Dry run complete: %d record(s) walked, no files written", len(rows))
-    else:
-        csv_path = write_csv(rows, outdir)
-        logger.info("Wrote %s", csv_path)
-
-        totals_row = next((row for row in rows if row.get("account_id") == TOTAL_ACCOUNT_ID), None)
-        if totals_row is None:
-            logger.error("No device-totals row found; monthly consumption was not updated")
-        else:
-            consumption_row = update_consumption(
-                outdir=outdir,
-                month=month,
-                device_ip=device_ip,
-                captured_at=totals_row.get("captured_at", ""),
-                totals_row=totals_row,
-            )
-            if consumption_row is not None:
-                logger.info(format_summary(consumption_row))
-
-    if any_errors:
-        logger.warning("Run completed with errors on at least one account; see status/error columns")
-        return 1
-    return 0
+    return aggregate_exit_code(outcomes)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -154,6 +225,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Report month for the PDF folder and the monthly consumption row "
             "(default: the current local month). Use it e.g. when running on "
             "the 1st of the month to record the previous month's closing."
+        ),
+    )
+    extract_parser.add_argument(
+        "--printer", metavar="NAME", action="append",
+        help=(
+            "Run only this printer (by its KYOCERA_PRINTERS name, case-insensitive). "
+            "Repeatable to run several specific printers. Default: run every configured printer."
         ),
     )
     extract_parser.set_defaults(func=_cmd_extract)

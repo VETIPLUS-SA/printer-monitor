@@ -8,7 +8,8 @@ from printer_monitor.output import BASE_COLUMNS, build_fieldnames, write_csv
 def _ok_row(account_id: str, private_id: str = "1", name: str = "Fake User"):
     return {
         "captured_at": "2026-09-01T08:00:00-05:00",
-        "device_ip": "https://192.168.1.59/",
+        "device_ip": "192.168.1.59",
+        "printer_name": "default",
         "account_id": account_id,
         "account_private_id": private_id,
         "account_name": name,
@@ -34,7 +35,7 @@ def _ok_row(account_id: str, private_id: str = "1", name: str = "Fake User"):
 
 def test_column_order_matches_spec():
     expected = [
-        "captured_at", "device_ip", "account_id", "account_private_id", "account_name",
+        "captured_at", "device_ip", "printer_name", "account_id", "account_private_id", "account_name",
         "copier_total", "printer_total",
         "duplex_1sided", "duplex_2sided", "duplex_total",
         "combine_none", "combine_2in1", "combine_4in1", "combine_total",
@@ -57,19 +58,21 @@ def test_extra_columns_appended_sorted_after_base_columns():
 
 def test_write_csv_keeps_leading_zeros_in_account_id(tmp_path):
     rows = [_ok_row("0007")]
-    path = write_csv(rows, tmp_path, timestamp=datetime(2026, 9, 1, 8, 30, 0))
-    assert path.name == "counters_20260901_083000.csv"
+    path = write_csv(rows, tmp_path, "192.168.1.59", timestamp=datetime(2026, 9, 1, 8, 30, 0))
+    assert path.name == "counters_192.168.1.59_20260901_083000.csv"
 
     with path.open("r", encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
         written = list(reader)
     assert written[0]["account_id"] == "0007"
+    assert written[0]["printer_name"] == "default"
 
 
 def test_write_csv_includes_error_rows_without_dropping_them(tmp_path):
     error_row = {
         "captured_at": "2026-09-01T08:00:00-05:00",
-        "device_ip": "https://192.168.1.59/",
+        "device_ip": "192.168.1.59",
+        "printer_name": "default",
         "account_id": "0099",
         "account_private_id": "42",
         "account_name": "Broken User",
@@ -77,7 +80,7 @@ def test_write_csv_includes_error_rows_without_dropping_them(tmp_path):
         "error": "timeout reading detail page",
     }
     rows = [_ok_row("0001"), error_row]
-    path = write_csv(rows, tmp_path, timestamp=datetime(2026, 9, 1, 8, 30, 0))
+    path = write_csv(rows, tmp_path, "192.168.1.59", timestamp=datetime(2026, 9, 1, 8, 30, 0))
 
     with path.open("r", encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
@@ -93,7 +96,16 @@ def test_write_csv_includes_error_rows_without_dropping_them(tmp_path):
 
 def test_write_csv_uses_utf8_bom_for_excel(tmp_path):
     rows = [_ok_row("0001", name="Ñandú Pérez")]
-    path = write_csv(rows, tmp_path, timestamp=datetime(2026, 9, 1, 8, 30, 0))
+    path = write_csv(rows, tmp_path, "192.168.1.59", timestamp=datetime(2026, 9, 1, 8, 30, 0))
     raw = path.read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf")
     assert "Ñandú Pérez".encode("utf-8") in raw
+
+
+def test_write_csv_filename_includes_device_ip_to_avoid_collisions(tmp_path):
+    ts = datetime(2026, 9, 1, 8, 30, 0)
+    path_a = write_csv([_ok_row("0001")], tmp_path, "192.168.1.59", timestamp=ts)
+    path_b = write_csv([_ok_row("0001")], tmp_path, "192.168.1.104", timestamp=ts)
+    assert path_a != path_b
+    assert "192.168.1.59" in path_a.name
+    assert "192.168.1.104" in path_b.name

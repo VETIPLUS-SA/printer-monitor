@@ -45,6 +45,7 @@ def test_first_month_for_a_device_is_a_baseline(tmp_path):
         _totals(1000, 500, 200, 10),
     )
     assert row["note"] == BASELINE_NOTE
+    assert row["printer_name"] == ""
     assert row["printer_pages"] == ""
     assert row["copier_pages"] == ""
     assert row["printed_pages"] == ""
@@ -203,6 +204,47 @@ def test_total_row_with_error_status_does_not_write(tmp_path):
     )
     assert result is None
     assert not (tmp_path / FILENAME).exists()
+
+
+def test_printer_name_column_is_stamped_and_stored(tmp_path):
+    row = update_consumption(
+        tmp_path, "2026-08", "192.168.1.59", "2026-08-01T08:00:00-05:00",
+        _totals(1000, 500, 200, 10), printer_name="pedidos",
+    )
+    assert row["printer_name"] == "pedidos"
+
+    rows = _read_rows(tmp_path)
+    assert rows[0]["printer_name"] == "pedidos"
+
+
+def test_printer_name_defaults_to_empty_string_when_not_given(tmp_path):
+    row = update_consumption(
+        tmp_path, "2026-08", "192.168.1.59", "2026-08-01T08:00:00-05:00",
+        _totals(1000, 500, 200, 10),
+    )
+    assert row["printer_name"] == ""
+
+
+def test_old_history_file_without_printer_name_column_still_loads(tmp_path):
+    path = tmp_path / FILENAME
+    path.write_text(
+        "month,device_ip,captured_at,printer_total,copier_total,scan_total,fax_tx_pages,"
+        "printer_pages,copier_pages,printed_pages,scanned_pages,fax_pages,note\r\n"
+        "2026-08,192.168.1.59,2026-08-01T08:00:00-05:00,1000,500,200,10,,,,,,"
+        + BASELINE_NOTE + "\r\n",
+        encoding="utf-8-sig",
+    )
+
+    row = update_consumption(
+        tmp_path, "2026-09", "192.168.1.59", "2026-09-01T08:00:00-05:00",
+        _totals(1300, 620, 260, 15), printer_name="pedidos",
+    )
+    assert row["printer_pages"] == "300"
+
+    rows = {r["month"]: r for r in _read_rows(tmp_path)}
+    # The old row's missing column loads as an empty string, not an error.
+    assert rows["2026-08"]["printer_name"] == ""
+    assert rows["2026-09"]["printer_name"] == "pedidos"
 
 
 def test_total_row_with_error_status_leaves_existing_file_untouched(tmp_path):

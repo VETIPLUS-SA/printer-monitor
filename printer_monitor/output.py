@@ -11,6 +11,7 @@ from pathlib import Path
 BASE_COLUMNS = [
     "captured_at",
     "device_ip",
+    "printer_name",
     "account_id",
     "account_private_id",
     "account_name",
@@ -43,17 +44,19 @@ def build_fieldnames(rows: list[dict]) -> list[str]:
     return BASE_COLUMNS + sorted(extra)
 
 
-def write_csv(rows: list[dict], outdir: Path, timestamp: datetime | None = None) -> Path:
-    """Write `rows` to `{outdir}/counters_{YYYYmmdd_HHMMSS}.csv`.
+def write_csv(rows: list[dict], outdir: Path, device_ip: str, timestamp: datetime | None = None) -> Path:
+    """Write `rows` to `{outdir}/counters_{device_ip}_{YYYYmmdd_HHMMSS}.csv`.
 
     UTF-8 with a BOM so Excel on Windows opens accented characters (á, é,
     ñ, ...) correctly. Every value is written as-is (as a string), so
-    account IDs with leading zeros are preserved.
+    account IDs with leading zeros are preserved. `device_ip` is included
+    in the file name so several printers writing to the same outdir never
+    collide.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     ts = (timestamp or datetime.now()).strftime("%Y%m%d_%H%M%S")
-    path = outdir / f"counters_{ts}.csv"
+    path = outdir / f"counters_{device_ip}_{ts}.csv"
 
     fieldnames = build_fieldnames(rows)
     with path.open("w", newline="", encoding="utf-8-sig") as fh:

@@ -72,10 +72,11 @@ def _pdf_filename(name: str) -> str:
     return cleaned or "SIN NOMBRE"
 
 
-def _base_row(account_id: str, private_id: str, name: str, device_ip: str) -> dict:
+def _base_row(account_id: str, private_id: str, name: str, device_ip: str, printer_name: str) -> dict:
     return {
         "captured_at": _now_iso(),
         "device_ip": device_ip,
+        "printer_name": printer_name,
         "account_id": account_id,
         "account_private_id": private_id,
         "account_name": name,
@@ -97,13 +98,14 @@ def _read_account_row(
     portal: KyoceraPortal,
     account: Account,
     device_ip: str,
+    printer_name: str,
     month: str,
     outdir: Optional[Path],
     save_pdf: bool,
     pdf_names: set[str],
     check_title: bool = True,
 ) -> dict:
-    row = _base_row(account.public_id, account.private_id, account.name, device_ip)
+    row = _base_row(account.public_id, account.private_id, account.name, device_ip, printer_name)
     try:
         counters = portal.read_counters(account, check_title=check_title)
         row.update(counters)
@@ -132,12 +134,13 @@ def _read_account_row(
 def _read_totals_row(
     portal: KyoceraPortal,
     device_ip: str,
+    printer_name: str,
     month: str,
     outdir: Optional[Path],
     save_pdf: bool,
     pdf_names: set[str],
 ) -> dict:
-    row = _base_row(TOTAL_ACCOUNT_ID, "", "Contabilidad total de trabajos", device_ip)
+    row = _base_row(TOTAL_ACCOUNT_ID, "", "Contabilidad total de trabajos", device_ip, printer_name)
     try:
         totals = portal.read_totals()
         row.update(totals)
@@ -169,6 +172,7 @@ def run_extraction(
     outdir: Optional[Path],
     save_pdf: bool = False,
     month: Optional[str] = None,
+    printer_name: str = "default",
 ) -> list[dict]:
     """Walk every account plus the "other account" and device totals,
     returning one row dict per record.
@@ -178,6 +182,9 @@ def run_extraction(
 
     `month` (YYYY-MM) is the report month used for the PDF folder; it
     defaults to the current local month when not given.
+
+    `printer_name` identifies this printer (Settings.name) and is stamped
+    onto every row.
     """
     if month is None:
         month = datetime.now().strftime("%Y-%m")
@@ -193,14 +200,18 @@ def run_extraction(
 
     for index, account in enumerate(regular_accounts, start=1):
         logger.info("Account %d of %d: %s (%s)", index, total, account.name, account.public_id)
-        rows.append(_read_account_row(portal, account, device_ip, month, outdir, save_pdf, pdf_names))
+        rows.append(
+            _read_account_row(portal, account, device_ip, printer_name, month, outdir, save_pdf, pdf_names)
+        )
 
     logger.info("Reading 'other account' totals (private id %s)", OTHER_ACCOUNT_PRIVATE_ID)
     rows.append(
-        _read_account_row(portal, _OTHER_ACCOUNT, device_ip, month, outdir, save_pdf, pdf_names, check_title=False)
+        _read_account_row(
+            portal, _OTHER_ACCOUNT, device_ip, printer_name, month, outdir, save_pdf, pdf_names, check_title=False
+        )
     )
 
     logger.info("Reading device-wide totals")
-    rows.append(_read_totals_row(portal, device_ip, month, outdir, save_pdf, pdf_names))
+    rows.append(_read_totals_row(portal, device_ip, printer_name, month, outdir, save_pdf, pdf_names))
 
     return rows

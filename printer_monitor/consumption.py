@@ -26,6 +26,7 @@ _MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 FIELDNAMES = [
     "month",
     "device_ip",
+    "printer_name",
     "captured_at",
     "printer_total",
     "copier_total",
@@ -69,10 +70,11 @@ def _to_int(value) -> Optional[int]:
         return None
 
 
-def _empty_row(month: str, device_ip: str) -> dict:
+def _empty_row(month: str, device_ip: str, printer_name: str = "") -> dict:
     row = {name: "" for name in FIELDNAMES}
     row["month"] = month
     row["device_ip"] = device_ip
+    row["printer_name"] = printer_name
     return row
 
 
@@ -155,7 +157,7 @@ def _recompute_device_rows(device_rows: list[dict]) -> list[dict]:
 
 
 def update_consumption(
-    outdir: Path, month: str, device_ip: str, captured_at: str, totals_row: dict
+    outdir: Path, month: str, device_ip: str, captured_at: str, totals_row: dict, printer_name: str = ""
 ) -> Optional[dict]:
     """Upsert this run's device-wide totals into
     `{outdir}/consumo_mensual.csv` for (month, device_ip), recompute the
@@ -186,7 +188,7 @@ def update_consumption(
     path = Path(outdir) / FILENAME
     existing = _read_existing(path)
 
-    new_row = _empty_row(month, device_ip)
+    new_row = _empty_row(month, device_ip, printer_name)
     new_row["captured_at"] = captured_at
     for col in _CUMULATIVE_COLUMNS:
         new_row[col] = totals_row.get(col, "")
