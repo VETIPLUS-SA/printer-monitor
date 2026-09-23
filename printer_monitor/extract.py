@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -47,8 +48,10 @@ _INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _pdf_filename(name: str) -> str:
-    """Account name as a Windows-safe, upper-cased file stem (accents kept)."""
-    cleaned = _INVALID_FILENAME_CHARS.sub(" ", name)
+    """Account name as a Windows-safe, upper-cased ASCII file stem (accents removed)."""
+    # NFKD splits "í" into "i" + combining accent, which is then dropped ("Ñ" -> "N").
+    cleaned = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    cleaned = _INVALID_FILENAME_CHARS.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .").upper()
     return cleaned or "SIN NOMBRE"
 

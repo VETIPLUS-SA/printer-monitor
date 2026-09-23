@@ -12,12 +12,13 @@ def test_path_uses_ip_folder_and_uppercase_name_without_id():
     assert path == OUT / "pdf" / IP / "ANGEL ZABALETA.pdf"
 
 
-def test_accents_are_kept_and_uppercased():
-    assert _pdf_filename("Carolina Mejía") == "CAROLINA MEJÍA"
+def test_accents_removed_and_uppercased():
+    assert _pdf_filename("Carolina Mejía") == "CAROLINA MEJIA"
+    assert _pdf_filename("Eliana Sánchez Muñoz") == "ELIANA SANCHEZ MUNOZ"
 
 
 def test_windows_invalid_characters_and_extra_spaces_removed():
-    assert _pdf_filename('  Ana: "Pérez" / Gómez?. ') == "ANA PÉREZ GÓMEZ"
+    assert _pdf_filename('  Ana: "Pérez" / Gómez?. ') == "ANA PEREZ GOMEZ"
 
 
 def test_empty_name_gets_placeholder():

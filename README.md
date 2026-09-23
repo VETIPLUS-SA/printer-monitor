@@ -113,7 +113,7 @@ output/
 ├── counters_YYYYMMDD_HHMMSS.csv   # una fila por cuenta
 ├── pdf/                            # solo con --pdf
 │   └── <IP de la impresora>/
-│       └── <NOMBRE EN MAYÚSCULAS>.pdf   # p. ej. pdf/192.168.1.59/ANGEL ZABALETA.pdf
+│       └── <NOMBRE EN MAYÚSCULAS, SIN TILDES>.pdf   # p. ej. pdf/192.168.1.59/CAROLINA MEJIA.pdf
 ├── diagnostics/                    # solo si alguna cuenta falla
 │   └── <timestamp>/<account_id>_*.png / *.html
 └── logs/
