@@ -46,6 +46,12 @@ data/*.db
 # Generated Reports
 reports/
 
+# Kyocera recon dumps (contain user names / account data)
+recon/
+
+# Extractor output (CSV, PDFs, diagnostics, logs -- contains real account data)
+output/
+
 # Configuration (Sensitive data)
 config/config.json
 

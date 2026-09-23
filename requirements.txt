@@ -1,2 +1,2 @@
-pysnmp==7.1.21
-reportlab==4.4.10
+playwright==1.63.0
+python-dotenv==1.2.3
