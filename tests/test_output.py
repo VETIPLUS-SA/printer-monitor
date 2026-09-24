@@ -36,7 +36,7 @@ def _ok_row(account_id: str, private_id: str = "1", name: str = "Fake User"):
 def test_column_order_matches_spec():
     expected = [
         "captured_at", "device_ip", "printer_name", "account_id", "account_private_id", "account_name",
-        "copier_total", "printer_total",
+        "copier_total", "printer_total", "fax_printed", "print_function_total",
         "duplex_1sided", "duplex_2sided", "duplex_total",
         "combine_none", "combine_2in1", "combine_4in1", "combine_total",
         "scan_copy", "scan_fax", "scan_other", "scan_total",

@@ -168,3 +168,23 @@ def test_validate_title_skips_check_when_expected_name_is_none():
 
 def test_validate_title_handles_non_breaking_space():
     validate_title("Juan\xa0Perez - Páginas impresas", "Juan Perez")  # no raise
+
+
+def test_print_function_optional_fax_and_total_rows_from_older_firmware():
+    rows = [
+        ["Copiadora Total", "----------", "3"],
+        ["Impresora Total", "----------", "40"],
+        ["FAX", "----------", "2"],
+        ["Total", "----------", "45"],
+    ]
+    assert map_rows("print_function", rows) == {
+        "copier_total": "3",
+        "printer_total": "40",
+        "fax_printed": "2",
+        "print_function_total": "45",
+    }
+
+
+def test_print_function_optional_rows_are_not_required():
+    rows = [["Copiadora Total", "----------", "0"], ["Impresora Total", "----------", "7"]]
+    assert map_rows("print_function", rows) == {"copier_total": "0", "printer_total": "7"}

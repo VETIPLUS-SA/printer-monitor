@@ -76,3 +76,14 @@ El model de `EchJobPrnCnt` trae los mismos valores en arrays sin etiqueta
 4. Nunca cargar `ResetCnt`, nunca tocar checkboxes/borrado; mantener el guard que aborta cualquier POST no permitido.
 5. Logout siempre en `finally`.
 6. Clave del usuario en el CSV: `account_id` (ID público); guardar también el ID interno y el nombre.
+
+## Anexo — Firmware antiguo (192.168.1.40, ECOSYS M3560idn)
+
+- Mismas URLs de lista y detalle, mismo requisito de `Referer`.
+- La lista no usa el model Knockout (`MngSet_JobAcc_JobAccLstModel` no existe): los mismos
+  campos (`searchResult`, `sDeptPrivateID`, `sDeptPublicID`, `sDeptName`) son variables globales
+  de la página. `portal.py` usa el model si existe y, si no, esas globales.
+- "Páginas impresas por función" trae dos filas extra: `FAX` (→ `fax_printed`) y `Total`
+  (→ `print_function_total`). Son opcionales en el parser.
+- Los iframes del detalle son más bajos que su contenido; antes de `page.pdf()` se agrandan
+  para que la tabla de escaneo no salga recortada.

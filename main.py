@@ -103,7 +103,7 @@ def _run_one_printer(
     except Exception as exc:  # noqa: BLE001 - one printer's failure must never stop the others
         # Playwright errors append a multi-line call log; the first line is the useful part.
         message = (str(exc).splitlines() or [repr(exc)])[0]
-        logger.error("Printer %s: unexpected error (unreachable or off?): %s", settings.name, message)
+        logger.error("Printer %s: unexpected error: %s", settings.name, message)
         return build_outcome(settings.name, device_ip, error=message)
 
     if portal.guard.has_blocked:

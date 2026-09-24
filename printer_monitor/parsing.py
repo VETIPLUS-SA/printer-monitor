@@ -47,6 +47,15 @@ LABEL_MAPS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 
+# Rows only some firmware shows (e.g. 192.168.1.40 lists received-FAX prints
+# and a total on the print-by-function page). Mapped when present, never required.
+OPTIONAL_LABEL_MAPS: dict[str, list[tuple[str, str]]] = {
+    "print_function": [
+        ("FAX", "fax_printed"),
+        ("Total", "print_function_total"),
+    ],
+}
+
 # Keys whose value is a hh:mm:ss duration instead of a plain integer.
 TIME_KEYS = {"fax_tx_time"}
 
@@ -95,7 +104,7 @@ def map_rows(kind: str, rows: list[list[str]]) -> dict[str, str]:
 
     expected = LABEL_MAPS[kind]
     queues: dict[str, deque[str]] = defaultdict(deque)
-    for label, key in expected:
+    for label, key in expected + OPTIONAL_LABEL_MAPS.get(kind, []):
         queues[label].append(key)
 
     result: dict[str, str] = {}

@@ -17,6 +17,8 @@ BASE_COLUMNS = [
     "account_name",
     "copier_total",
     "printer_total",
+    "fax_printed",
+    "print_function_total",
     "duplex_1sided",
     "duplex_2sided",
     "duplex_total",

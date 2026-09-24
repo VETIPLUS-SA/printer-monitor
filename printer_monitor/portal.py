@@ -85,12 +85,33 @@ _ROW_EXTRACT_JS = """() => {
     return { title, rows };
 }"""
 
-_ACCOUNT_LIST_EXTRACT_JS = """() => ({
-    total: MngSet_JobAcc_JobAccLstModel.get('searchResult'),
-    privateIds: MngSet_JobAcc_JobAccLstModel.get('sDeptPrivateID'),
-    publicIds: MngSet_JobAcc_JobAccLstModel.get('sDeptPublicID'),
-    names: MngSet_JobAcc_JobAccLstModel.get('sDeptName'),
-})"""
+_EXPAND_IFRAMES_JS = """() => {
+    for (const iframe of document.querySelectorAll('iframe')) {
+        try {
+            const body = iframe.contentDocument && iframe.contentDocument.body;
+            if (body && body.scrollHeight > iframe.clientHeight) {
+                iframe.style.height = body.scrollHeight + 'px';
+                iframe.setAttribute('height', String(body.scrollHeight));
+            }
+        } catch (e) { /* cross-origin or detached: leave as is */ }
+    }
+}"""
+
+# Newer firmware (Knockout) exposes the list through a model object; older
+# firmware (e.g. 192.168.1.40) declares the same fields as page globals.
+_ACCOUNT_LIST_EXTRACT_JS = """() => {
+    const model = window.MngSet_JobAcc_JobAccLstModel;
+    const get = model ? (key => model.get(key)) : (key => window[key]);
+    if (!model && typeof window.sDeptPrivateID === 'undefined') {
+        throw new Error('account list data not found (neither Knockout model nor page globals)');
+    }
+    return {
+        total: get('searchResult'),
+        privateIds: get('sDeptPrivateID'),
+        publicIds: get('sDeptPublicID'),
+        names: get('sDeptName'),
+    };
+}"""
 
 
 class PortalError(Exception):
@@ -369,6 +390,14 @@ class KyoceraPortal:
         Chromium; the caller is responsible for not calling this in
         --headed mode."""
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Older firmware sizes the counter iframes too short (e.g. the scan
+        # table on 192.168.1.40 printed only its first row): grow every iframe
+        # to its content height so the PDF shows the whole table.
+        for frame in self.page.frames:
+            try:
+                frame.evaluate(_EXPAND_IFRAMES_JS)
+            except PlaywrightError:
+                pass
         self.page.pdf(path=str(path))
 
     def capture_diagnostics(self, outdir: Path, account_id: str) -> Path:
