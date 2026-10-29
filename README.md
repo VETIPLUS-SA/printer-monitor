@@ -188,6 +188,7 @@ python main.py extract --headed        # con ventana visible, para depurar
 python main.py extract --pdf           # además del CSV, un PDF por cuenta
 python main.py extract --outdir salida # carpeta de salida distinta
 python main.py extract --month 2026-09 # fija el mes del reporte
+python main.py extract -p              # reporte del mes anterior (--previous-month)
 python main.py extract --printer pedidos --printer bodega  # solo estas impresoras
 ```
 
@@ -205,6 +206,10 @@ python main.py extract --printer pedidos --printer bodega  # solo estas impresor
   al correr el script el día 1 del mes para registrar el cierre del mes
   anterior: `python main.py extract --month 2026-08`. Se aplica igual a
   todas las impresoras de la corrida.
+- `-p` / `--previous-month` usa como mes del reporte el mes anterior al
+  actual (hora local), sin tener que escribirlo: corriendo en octubre de
+  2026 equivale a `--month 2026-09`, y en enero pasa a diciembre del año
+  anterior. No se puede combinar con `--month`.
 - `--printer NAME` (repetible, insensible a mayúsculas): corre solo esas
   impresoras en vez de todas las configuradas. Ver "Varias impresoras" más
   arriba.

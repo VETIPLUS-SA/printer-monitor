@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from printer_monitor.config import ConfigError, Settings, load_printers
-from printer_monitor.consumption import format_summary, is_valid_month, update_consumption
+from printer_monitor.consumption import format_summary, is_valid_month, previous_month, update_consumption
 from printer_monitor.extract import run_extraction
 from printer_monitor.output import write_csv
 from printer_monitor.portal import KyoceraPortal, PortalError, TOTAL_ACCOUNT_ID
@@ -163,7 +163,10 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     if args.month is not None and not is_valid_month(args.month):
         print(f"Invalid --month value: {args.month!r} (expected YYYY-MM)", file=sys.stderr)
         return 1
-    month = args.month or datetime.now().strftime("%Y-%m")
+    if args.previous_month:
+        month = previous_month(datetime.now().date())
+    else:
+        month = args.month or datetime.now().strftime("%Y-%m")
 
     outdir = Path(args.outdir or printers[0].outdir)
     dry_run = args.dry_run
@@ -219,13 +222,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--pdf", action="store_true",
         help="Also save each account's detail page as a PDF (headless only)",
     )
-    extract_parser.add_argument(
+    month_group = extract_parser.add_mutually_exclusive_group()
+    month_group.add_argument(
         "--month", metavar="YYYY-MM",
         help=(
             "Report month for the PDF folder and the monthly consumption row "
             "(default: the current local month). Use it e.g. when running on "
             "the 1st of the month to record the previous month's closing."
         ),
+    )
+    month_group.add_argument(
+        "-p", "--previous-month", action="store_true",
+        help="Use the month before the current local month as the report month (e.g. September when run in October)",
     )
     extract_parser.add_argument(
         "--printer", metavar="NAME", action="append",

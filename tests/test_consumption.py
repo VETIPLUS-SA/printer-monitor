@@ -1,5 +1,6 @@
 """Unit tests for printer_monitor.consumption (monthly consumption history)."""
 import csv
+from datetime import date
 
 import pytest
 
@@ -7,6 +8,7 @@ from printer_monitor.consumption import (
     BASELINE_NOTE,
     FILENAME,
     is_valid_month,
+    previous_month,
     update_consumption,
 )
 
@@ -37,6 +39,13 @@ def test_is_valid_month():
     assert not is_valid_month("26-09")
     assert not is_valid_month("2026/09")
     assert not is_valid_month("")
+
+
+def test_previous_month():
+    assert previous_month(date(2026, 10, 29)) == "2026-09"
+    assert previous_month(date(2026, 10, 1)) == "2026-09"
+    assert previous_month(date(2026, 3, 31)) == "2026-02"
+    assert previous_month(date(2027, 1, 1)) == "2026-12"
 
 
 def test_first_month_for_a_device_is_a_baseline(tmp_path):

@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import tempfile
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -59,6 +60,13 @@ FILENAME = "consumo_mensual.csv"
 def is_valid_month(value: str) -> bool:
     """True when `value` is a well-formed "YYYY-MM" string."""
     return bool(_MONTH_RE.match(value))
+
+
+def previous_month(today: date) -> str:
+    """Mes anterior al de `today` en formato "YYYY-MM"; en enero pasa a diciembre del año anterior."""
+    if today.month == 1:
+        return f"{today.year - 1}-12"
+    return f"{today.year}-{today.month - 1:02d}"
 
 
 def _to_int(value) -> Optional[int]:
