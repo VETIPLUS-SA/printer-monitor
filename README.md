@@ -311,6 +311,60 @@ El código de salida se calcula sobre **todas las impresoras** de la corrida
 Al final de cada corrida se imprime un resumen de una línea por impresora
 (nombre, IP, estado) en el log, independientemente del código de salida.
 
+### Tarea programada mensual (`PrinterMonitorMonthCount`)
+
+En Windows, el cierre de cada mes se automatiza con una tarea programada
+que el día 1 de cada mes a la 1:00 a. m. ejecuta
+`python main.py extract -p --pdf`. Es decir, guarda el CSV y los PDFs del
+mes anterior para todas las impresoras configuradas.
+
+Para registrarla, o reemplazarla si ya existe, ejecuta desde la carpeta del
+proyecto en PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\registrar_tarea.ps1
+```
+
+Por defecto corre con tu usuario y **solo mientras tengas la sesión
+iniciada**, sin pedir contraseña ni permisos de administrador. Para que
+corra aunque no haya nadie conectado, abre PowerShell **como
+administrador** y agrega `-SinSesion`. El script pide la contraseña de tu
+usuario y la guarda en el Programador de tareas:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\registrar_tarea.ps1 -SinSesion
+```
+
+Medidas para que no se pierda la corrida:
+
+- **Equipo apagado o sin sesión a la 1:00:** la tarea corre apenas el equipo
+  esté disponible (`StartWhenAvailable`), por ejemplo al encenderlo o al
+  iniciar sesión.
+- **Equipo suspendido:** lo despierta para correr (`WakeToRun`).
+- **Fallo en la corrida:** `tools\tarea_mensual.ps1` reintenta hasta 3 veces,
+  con 15 minutos entre intentos, cuando `main.py` termina con código `1`
+  (impresora apagada, red caída, etc.). Repetir es seguro: la fila del mes en
+  `consumo_mensual.csv` se reemplaza y los PDFs se sobrescriben. Un código
+  `2` (guard de seguridad) **nunca se reintenta**: hay que revisarlo a mano.
+- **Fallo al arrancar la tarea:** el Programador de tareas la reintenta 3
+  veces cada 15 minutos.
+- **Corrida colgada:** el Programador de tareas detiene la tarea a las 4
+  horas, y no arranca una segunda copia si la anterior sigue corriendo.
+
+Además del log normal de cada corrida, la tarea deja en `output\logs\`:
+
+- `tarea_mensual_<fecha>.log`: los intentos y el código de salida de cada uno.
+- `tarea_mensual_<fecha>_intentoN.out.log` y `.err.log`: lo que el script
+  imprimió en consola en ese intento.
+
+Comandos útiles:
+
+```powershell
+Start-ScheduledTask PrinterMonitorMonthCount                       # correrla ya, para probar
+Get-ScheduledTask PrinterMonitorMonthCount | Get-ScheduledTaskInfo # próxima/última corrida y resultado
+Unregister-ScheduledTask PrinterMonitorMonthCount -Confirm:$false  # eliminarla
+```
+
 ## La particularidad del Referer
 
 El servidor del portal responde `404` a las URLs de detalle bajo `/mngset/`
